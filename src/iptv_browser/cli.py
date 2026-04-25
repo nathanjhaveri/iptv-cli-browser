@@ -62,7 +62,10 @@ def cmd_browse(args: argparse.Namespace) -> int:
         print(f"{exc}. Run `iptv fetch` first.")
         return 2
 
-    result = ChannelBrowser(channels).run()
+    try:
+        result = ChannelBrowser(channels).run()
+    except KeyboardInterrupt:
+        return 0
     if result.selected_command:
         print(result.selected_command)
     return 0

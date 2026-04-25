@@ -52,6 +52,12 @@ class ChannelBrowser:
             key = stdscr.getch()
             if key in (ord("q"), 27):
                 return
+            if key == 3:
+                if self.query:
+                    self.query = ""
+                    self._apply_filter()
+                    continue
+                return
             if key in (curses.KEY_UP, ord("k")):
                 self.index = max(0, self.index - 1)
                 continue
@@ -65,7 +71,7 @@ class ChannelBrowser:
             if key in (10, 13):
                 if self.filtered:
                     self.result.selected_command = format_ffmpeg_command(self.filtered[self.index])
-                return
+                continue
             if 32 <= key <= 126:
                 self.query += chr(key)
                 self._apply_filter()
@@ -73,9 +79,11 @@ class ChannelBrowser:
     def _draw(self, stdscr: curses.window) -> None:
         stdscr.erase()
         height, width = stdscr.getmaxyx()
-        list_width = max(30, width // 2)
-        detail_width = max(20, width - list_width - 1)
-        rows = max(1, height - 3)
+        detail_height = min(9, max(6, height // 3))
+        list_top = 0
+        detail_top = max(1, height - 2 - detail_height)
+        list_bottom = detail_top - 1
+        rows = max(1, list_bottom - list_top)
         start = 0
         if self.index >= rows:
             start = self.index - rows + 1
@@ -88,15 +96,12 @@ class ChannelBrowser:
             if current:
                 line = f"{line} | {current}"
             attr = curses.A_REVERSE if idx == self.index else curses.A_NORMAL
-            stdscr.addnstr(row, 0, line, list_width - 1, attr)
+            stdscr.addnstr(list_top + row, 0, line, width - 1, attr)
 
         selected = self.filtered[self.index] if self.filtered else None
-        if selected:
-            self._draw_detail(stdscr, selected, 0, list_width + 1, rows, detail_width - 1)
-        else:
-            stdscr.addnstr(0, list_width + 1, "No channels match the current filter.", detail_width - 1)
+        self._draw_detail(stdscr, selected, detail_top, 0, detail_height, width - 1)
 
-        footer = f"Channels: {len(self.filtered)}/{len(self.channels)}  Enter: print ffmpeg  q: quit"
+        footer = f"Channels: {len(self.filtered)}/{len(self.channels)}  Enter: refresh command  Ctrl-C: clear/quit"
         stdscr.addnstr(height - 2, 0, footer, width - 1, curses.A_BOLD)
         prompt = f"Search: {self.query}"
         stdscr.addnstr(height - 1, 0, prompt, width - 1)
@@ -106,12 +111,16 @@ class ChannelBrowser:
     def _draw_detail(
         self,
         stdscr: curses.window,
-        channel: Channel,
+        channel: Channel | None,
         top: int,
         left: int,
         height: int,
         width: int,
     ) -> None:
+        bottom = top + max(1, height)
+        if channel is None:
+            stdscr.addnstr(top, left, "No channels match the current filter.", width)
+            return
         lines = [
             channel.name,
             f"Category: {channel.category_name or 'Uncategorized'}",
@@ -129,11 +138,12 @@ class ChannelBrowser:
                 lines.append(f"{program.time_range} {program.title}")
         lines.append("")
         lines.append("ffmpeg:")
-        lines.append(format_ffmpeg_command(channel))
+        command = self.result.selected_command or format_ffmpeg_command(channel)
+        lines.append(command)
 
         row = top
         for line in lines:
-            if row >= height:
+            if row >= bottom:
                 break
             stdscr.addnstr(row, left, line, width)
             row += 1
