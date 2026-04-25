@@ -81,7 +81,7 @@ class ChannelBrowser:
         while True:
             self._draw(stdscr)
             key = stdscr.getch()
-            if key in (ord("q"), 27):
+            if key == 27:
                 return
             if key == 3:
                 if self.query:
@@ -89,23 +89,23 @@ class ChannelBrowser:
                     self._apply_filter()
                     continue
                 return
-            if key in (ord("p"), ord("\t")):
+            if key == ord("\t"):
                 if self.program_mode:
                     self.program_mode = False
                 elif self._selected_program_rows():
                     self.program_mode = True
                     self.program_index = 0
                 continue
-            if key in (curses.KEY_LEFT, ord("h")) and self.program_mode:
+            if key == curses.KEY_LEFT and self.program_mode:
                 self.program_mode = False
                 continue
-            if key in (curses.KEY_UP, ord("k")):
+            if key == curses.KEY_UP:
                 if self.program_mode:
                     self.program_index = max(0, self.program_index - 1)
                 else:
                     self.channel_index = max(0, self.channel_index - 1)
                 continue
-            if key in (curses.KEY_DOWN, ord("j")):
+            if key == curses.KEY_DOWN:
                 if self.program_mode:
                     self.program_index = min(max(0, len(self._selected_program_rows()) - 1), self.program_index + 1)
                 else:
@@ -165,7 +165,7 @@ class ChannelBrowser:
         self._draw_detail(stdscr, detail_top, 0, detail_height, width - 1)
 
         mode = "Programs" if self.program_mode else "Channels"
-        footer = f"{mode}: {len(self._selected_program_rows()) if self.program_mode else len(self.filtered)}/{len(self.channels) if not self.program_mode else len(self._selected_program_rows())}  Enter: refresh command  Tab/p: toggle programs  Ctrl-C: clear/quit"
+        footer = f"{mode}: {len(self._selected_program_rows()) if self.program_mode else len(self.filtered)}/{len(self.channels) if not self.program_mode else len(self._selected_program_rows())}  Enter: refresh command  Tab: toggle programs  Ctrl-C: clear/quit"
         stdscr.addnstr(height - 2, 0, footer, width - 1, curses.A_BOLD)
         prompt = f"Search: {self.query}"
         stdscr.addnstr(height - 1, 0, prompt, width - 1)
