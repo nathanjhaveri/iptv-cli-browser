@@ -1,4 +1,7 @@
 .env
 .env.local
+epg.xml
+xtream_live_streams.json
+xtream_categories.json
 __pycache__/
 *.pyc
