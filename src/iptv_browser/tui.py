@@ -137,9 +137,9 @@ class ChannelBrowser:
             for program in channel.upcoming_programs:
                 lines.append(f"{program.time_range} {program.title}")
         lines.append("")
-        lines.append("ffmpeg:")
         command = self.result.selected_command or format_ffmpeg_command(channel)
         lines.append(command)
+        lines.append(f'vlc "{channel.stream_url}"')
 
         row = top
         for line in lines:
