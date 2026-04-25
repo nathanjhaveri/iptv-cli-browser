@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from iptv_browser.models import Program
-from iptv_browser.library import attach_epg, format_ffmpeg_command, load_channels, load_epg_snapshot
+from iptv_browser.library import attach_epg, format_ffmpeg_command, inspect_library, load_channels, load_epg_snapshot
 from iptv_browser.xtream import load_dotenv
 
 
@@ -82,6 +82,29 @@ class LibraryTests(unittest.TestCase):
             )
             self.assertEqual("Bulletin", result[0].current_program.title)
             self.assertEqual("Weather", result[0].upcoming_programs[0].title)
+
+    def test_inspect_library_reports_stale_epg(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "xtream_live_streams.json").write_text(
+                json.dumps([{"stream_id": 101, "name": "News HD", "epg_channel_id": "news.hd"}]),
+                encoding="utf-8",
+            )
+            (root / "xtream_categories.json").write_text(json.dumps([]), encoding="utf-8")
+            xml = """<?xml version="1.0" encoding="utf-8"?>
+<tv>
+  <channel id="news.hd"><display-name>News HD</display-name></channel>
+  <programme start="20250425190000 +0000" stop="20250425200000 +0000" channel="news.hd"><title>Old Bulletin</title></programme>
+</tv>
+"""
+            (root / "epg.xml").write_text(xml, encoding="utf-8")
+            summary = inspect_library(root, now=datetime(2026, 4, 25, 19, 30, tzinfo=timezone.utc))
+            self.assertEqual(1, summary.live_stream_count)
+            self.assertEqual(1, summary.live_streams_with_epg_channel_id)
+            self.assertEqual(1, summary.epg_channel_count)
+            self.assertEqual(0, summary.epg_program_entry_count)
+            self.assertEqual(0, summary.channels_with_epg)
+            self.assertTrue(summary.epg_is_stale)
 
     def test_ffmpeg_command_uses_slugged_filename(self) -> None:
         channel = type(

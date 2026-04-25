@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from xml.etree import ElementTree as ET
@@ -11,6 +12,19 @@ from .models import Channel, Program
 from .xtream import CATEGORIES_FILE, EPG_FILE, LIVE_STREAMS_FILE
 
 DEFAULT_RECORD_DURATION_SECONDS = 30 * 60
+
+
+@dataclass(slots=True)
+class LibraryInspection:
+    live_stream_count: int
+    live_streams_with_epg_channel_id: int
+    category_count: int
+    epg_channel_count: int
+    epg_program_channel_count: int
+    epg_program_entry_count: int
+    channels_with_epg: int
+    epg_is_stale: bool
+    next_program_at: datetime | None
 
 
 def load_json(path: Path) -> list[dict]:
@@ -172,6 +186,57 @@ def load_library(
     channels = load_channels(workdir, server=server, username=username, password=password)
     display_names, programs = load_epg_snapshot(workdir, now=now)
     return attach_epg(channels, display_names, programs, now=now)
+
+
+def inspect_library(
+    workdir: Path,
+    *,
+    server: str | None = None,
+    username: str | None = None,
+    password: str | None = None,
+    now: datetime | None = None,
+) -> LibraryInspection:
+    now = now or datetime.now().astimezone()
+
+    live_stream_count = 0
+    live_streams_with_epg_channel_id = 0
+    category_count = 0
+    channels: list[Channel] = []
+
+    live_path = workdir / LIVE_STREAMS_FILE
+    if live_path.exists():
+        raw_channels = load_json(live_path)
+        live_stream_count = len(raw_channels)
+        live_streams_with_epg_channel_id = sum(1 for item in raw_channels if str(item.get("epg_channel_id", "")).strip())
+        channels = load_channels(workdir, server=server, username=username, password=password)
+
+    category_path = workdir / CATEGORIES_FILE
+    if category_path.exists():
+        category_count = len(load_json(category_path))
+
+    display_names, programs = load_epg_snapshot(workdir, now=now)
+    epg_channel_count = len(display_names)
+    epg_program_channel_count = len(programs)
+    epg_program_entry_count = sum(len(entries) for entries in programs.values())
+    next_program_at = min((program.start for entries in programs.values() for program in entries), default=None)
+
+    if channels:
+        channels = attach_epg(channels, display_names, programs, now=now)
+    channels_with_epg = sum(1 for channel in channels if channel.current_program or channel.upcoming_programs)
+
+    epg_is_stale = epg_channel_count > 0 and epg_program_entry_count == 0
+
+    return LibraryInspection(
+        live_stream_count=live_stream_count,
+        live_streams_with_epg_channel_id=live_streams_with_epg_channel_id,
+        category_count=category_count,
+        epg_channel_count=epg_channel_count,
+        epg_program_channel_count=epg_program_channel_count,
+        epg_program_entry_count=epg_program_entry_count,
+        channels_with_epg=channels_with_epg,
+        epg_is_stale=epg_is_stale,
+        next_program_at=next_program_at,
+    )
 
 
 def slugify(value: str) -> str:

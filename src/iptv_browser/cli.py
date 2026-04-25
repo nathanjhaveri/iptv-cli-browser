@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from .library import load_library
+from .library import inspect_library, load_library
 from .tui import ChannelBrowser
 from .xtream import CATEGORIES_FILE, EPG_FILE, LIVE_STREAMS_FILE, XtreamConfigError, fetch_xtream_data, load_dotenv, resolve_credentials
 
@@ -84,13 +84,22 @@ def cmd_inspect(args: argparse.Namespace) -> int:
         server = username = password = None
 
     try:
-        channels = load_library(workdir, server=server, username=username, password=password)
+        summary = inspect_library(workdir, server=server, username=username, password=password)
     except FileNotFoundError:
         return 0
 
-    with_epg = sum(1 for channel in channels if channel.current_program or channel.upcoming_programs)
-    print(f"channels: {len(channels)}")
-    print(f"channels_with_epg: {with_epg}")
+    print(f"channels: {summary.live_stream_count}")
+    print(f"channels_with_epg_channel_id: {summary.live_streams_with_epg_channel_id}")
+    print(f"categories: {summary.category_count}")
+    print(f"epg_channels: {summary.epg_channel_count}")
+    print(f"epg_channels_with_programs: {summary.epg_program_channel_count}")
+    print(f"epg_program_entries: {summary.epg_program_entry_count}")
+    print(f"channels_with_matched_epg: {summary.channels_with_epg}")
+    print(f"epg_is_stale: {'yes' if summary.epg_is_stale else 'no'}")
+    print(
+        "next_epg_program_at: "
+        f"{summary.next_program_at.isoformat() if summary.next_program_at else 'none'}"
+    )
     return 0
 
 
