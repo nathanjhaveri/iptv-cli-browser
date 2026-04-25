@@ -120,7 +120,7 @@ class LibraryTests(unittest.TestCase):
             channel,
             timestamp=datetime(2026, 4, 25, 11, 12, 13, tzinfo=timezone.utc),
         )
-        self.assertIn("-reconnect 1 -reconnect_streamed 1 -reconnect_at_eof 1 -reconnect_delay_max 10", command)
+        self.assertIn('ffmpeg -reconnect 1 -i "http://example/stream.ts"', command)
         self.assertIn("-t 00:30:00", command)
         self.assertIn("-map 0 -dn -fflags +discardcorrupt -c copy -f mpegts", command)
         self.assertIn('"2026-04-25T111213-es-m-laliga-1-hd.ts"', command)

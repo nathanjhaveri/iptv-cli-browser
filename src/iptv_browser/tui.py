@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import curses
+import textwrap
 from dataclasses import dataclass
 
 from .library import format_ffmpeg_command, normalize_name
@@ -206,11 +207,48 @@ class ChannelBrowser:
         lines.append("")
         command = self.result.selected_command or format_ffmpeg_command(channel, program=detail_program)
         lines.append(command)
-        lines.append(f'vlc "{channel.stream_url}"')
 
         row = top
         for line in lines:
+            wrapped_lines = self._wrap_detail_line(line, width)
+            for wrapped in wrapped_lines:
+                if row >= bottom:
+                    break
+                stdscr.addnstr(row, left, wrapped, width)
+                row += 1
             if row >= bottom:
                 break
-            stdscr.addnstr(row, left, line, width)
-            row += 1
+
+    def _wrap_detail_line(self, line: str, width: int) -> list[str]:
+        if not line:
+            return [""]
+        if line.startswith("ffmpeg "):
+            return self._wrap_shell_command(line, width)
+        return textwrap.wrap(
+            line,
+            width=max(1, width),
+            break_long_words=False,
+            break_on_hyphens=False,
+        ) or [line]
+
+    def _wrap_shell_command(self, line: str, width: int) -> list[str]:
+        available_width = max(8, width - 2)
+        parts = line.split(" ")
+        wrapped: list[str] = []
+        current = ""
+
+        for part in parts:
+            candidate = part if not current else f"{current} {part}"
+            if len(candidate) <= available_width:
+                current = candidate
+                continue
+            if current:
+                wrapped.append(f"{current} \\")
+                current = f"  {part}"
+            else:
+                wrapped.append(f"{part} \\")
+                current = "  "
+
+        if current:
+            wrapped.append(current)
+        return wrapped or [line]
