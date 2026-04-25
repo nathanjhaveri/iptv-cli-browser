@@ -97,6 +97,7 @@ class LibraryTests(unittest.TestCase):
             channel,
             timestamp=datetime(2026, 4, 25, 11, 12, 13, tzinfo=timezone.utc),
         )
+        self.assertIn("-t 00:30:00", command)
         self.assertIn('"2026-04-25T111213-es-m-laliga-1-hd.ts"', command)
 
     def test_ffmpeg_command_uses_epg_title_and_remaining_duration(self) -> None:
@@ -120,6 +121,36 @@ class LibraryTests(unittest.TestCase):
         )
         self.assertIn("-t 01:47:47", command)
         self.assertIn('"el-clasico-2026-04-25T1100-es-m-laliga-1-hd.ts"', command)
+
+    def test_ffmpeg_command_can_target_upcoming_program(self) -> None:
+        current_program = Program(
+            title="Current Show",
+            start=datetime(2026, 4, 25, 11, 0, 0, tzinfo=timezone.utc),
+            stop=datetime(2026, 4, 25, 13, 0, 0, tzinfo=timezone.utc),
+            description="",
+        )
+        upcoming_program = Program(
+            title="Next Match",
+            start=datetime(2026, 4, 25, 13, 0, 0, tzinfo=timezone.utc),
+            stop=datetime(2026, 4, 25, 15, 0, 0, tzinfo=timezone.utc),
+            description="",
+        )
+        channel = type(
+            "ChannelLike",
+            (),
+            {
+                "name": "Sports 1",
+                "stream_url": "http://example/stream.ts",
+                "current_program": current_program,
+            },
+        )()
+        command = format_ffmpeg_command(
+            channel,
+            program=upcoming_program,
+            timestamp=datetime(2026, 4, 25, 11, 12, 13, tzinfo=timezone.utc),
+        )
+        self.assertIn("-t 02:00:00", command)
+        self.assertIn('"next-match-2026-04-25T1300-sports-1.ts"', command)
 
 
 if __name__ == "__main__":

@@ -10,6 +10,8 @@ from xml.etree import ElementTree as ET
 from .models import Channel, Program
 from .xtream import CATEGORIES_FILE, EPG_FILE, LIVE_STREAMS_FILE
 
+DEFAULT_RECORD_DURATION_SECONDS = 30 * 60
+
 
 def load_json(path: Path) -> list[dict]:
     return json.loads(path.read_text(encoding="utf-8"))
@@ -182,16 +184,22 @@ def format_seconds_as_hms(total_seconds: int) -> str:
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
-def format_ffmpeg_command(channel: Channel, *, timestamp: datetime | None = None) -> str:
+def format_ffmpeg_command(
+    channel: Channel,
+    *,
+    program: Program | None = None,
+    timestamp: datetime | None = None,
+) -> str:
     timestamp = timestamp or datetime.now().astimezone()
+    target_program = program or channel.current_program
     title_slug = slugify(channel.name) or "channel"
     parts: list[str] = []
 
-    if channel.current_program:
-        program_slug = slugify(channel.current_program.title)
+    if target_program:
+        program_slug = slugify(target_program.title)
         if program_slug:
             parts.append(program_slug)
-        parts.append(channel.current_program.start.astimezone(timestamp.tzinfo).strftime("%Y-%m-%dT%H%M"))
+        parts.append(target_program.start.astimezone(timestamp.tzinfo).strftime("%Y-%m-%dT%H%M"))
     else:
         parts.append(timestamp.strftime("%Y-%m-%dT%H%M%S"))
 
@@ -199,9 +207,13 @@ def format_ffmpeg_command(channel: Channel, *, timestamp: datetime | None = None
     filename = "-".join(parts) + ".ts"
 
     command_parts = ["ffmpeg", "-i", f'"{channel.stream_url}"']
-    if channel.current_program:
-        remaining_seconds = int((channel.current_program.stop - timestamp).total_seconds())
-        if remaining_seconds > 0:
-            command_parts.extend(["-t", format_seconds_as_hms(remaining_seconds)])
+    duration_seconds = DEFAULT_RECORD_DURATION_SECONDS
+    if target_program:
+        if program is not None:
+            duration_seconds = int((target_program.stop - target_program.start).total_seconds())
+        else:
+            duration_seconds = int((target_program.stop - timestamp).total_seconds())
+    if duration_seconds > 0:
+        command_parts.extend(["-t", format_seconds_as_hms(duration_seconds)])
     command_parts.extend(["-c", "copy", f'"{filename}"'])
     return " ".join(command_parts)
