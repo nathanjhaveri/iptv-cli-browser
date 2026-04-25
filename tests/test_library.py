@@ -7,6 +7,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
+from iptv_browser.models import Program
 from iptv_browser.library import attach_epg, format_ffmpeg_command, load_channels, load_epg_snapshot
 from iptv_browser.xtream import load_dotenv
 
@@ -83,12 +84,42 @@ class LibraryTests(unittest.TestCase):
             self.assertEqual("Weather", result[0].upcoming_programs[0].title)
 
     def test_ffmpeg_command_uses_slugged_filename(self) -> None:
-        channel = type("ChannelLike", (), {"name": "ES| M.LALIGA 1 HD", "stream_url": "http://example/stream.ts"})()
+        channel = type(
+            "ChannelLike",
+            (),
+            {
+                "name": "ES| M.LALIGA 1 HD",
+                "stream_url": "http://example/stream.ts",
+                "current_program": None,
+            },
+        )()
         command = format_ffmpeg_command(
             channel,
             timestamp=datetime(2026, 4, 25, 11, 12, 13, tzinfo=timezone.utc),
         )
-        self.assertIn("es-m-laliga-1-hd-2026-04-25T111213.ts", command)
+        self.assertIn('"2026-04-25T111213-es-m-laliga-1-hd.ts"', command)
+
+    def test_ffmpeg_command_uses_epg_title_and_remaining_duration(self) -> None:
+        channel = type(
+            "ChannelLike",
+            (),
+            {
+                "name": "ES| M.LALIGA 1 HD",
+                "stream_url": "http://example/stream.ts",
+                "current_program": Program(
+                    title="El Clasico",
+                    start=datetime(2026, 4, 25, 11, 0, 0, tzinfo=timezone.utc),
+                    stop=datetime(2026, 4, 25, 13, 0, 0, tzinfo=timezone.utc),
+                    description="",
+                ),
+            },
+        )()
+        command = format_ffmpeg_command(
+            channel,
+            timestamp=datetime(2026, 4, 25, 11, 12, 13, tzinfo=timezone.utc),
+        )
+        self.assertIn("-t 01:47:47", command)
+        self.assertIn('"el-clasico-2026-04-25T1100-es-m-laliga-1-hd.ts"', command)
 
 
 if __name__ == "__main__":

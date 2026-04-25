@@ -172,8 +172,36 @@ def load_library(
     return attach_epg(channels, display_names, programs, now=now)
 
 
+def slugify(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", value.casefold()).strip("-")
+
+
+def format_seconds_as_hms(total_seconds: int) -> str:
+    hours, remainder = divmod(max(0, total_seconds), 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
 def format_ffmpeg_command(channel: Channel, *, timestamp: datetime | None = None) -> str:
     timestamp = timestamp or datetime.now().astimezone()
-    slug = re.sub(r"[^a-z0-9]+", "-", channel.name.casefold()).strip("-") or "channel"
-    filename = f"{slug}-{timestamp.strftime('%Y-%m-%dT%H%M%S')}.ts"
-    return f'ffmpeg -i "{channel.stream_url}" -c copy "{filename}"'
+    title_slug = slugify(channel.name) or "channel"
+    parts: list[str] = []
+
+    if channel.current_program:
+        program_slug = slugify(channel.current_program.title)
+        if program_slug:
+            parts.append(program_slug)
+        parts.append(channel.current_program.start.astimezone(timestamp.tzinfo).strftime("%Y-%m-%dT%H%M"))
+    else:
+        parts.append(timestamp.strftime("%Y-%m-%dT%H%M%S"))
+
+    parts.append(title_slug)
+    filename = "-".join(parts) + ".ts"
+
+    command_parts = ["ffmpeg", "-i", f'"{channel.stream_url}"']
+    if channel.current_program:
+        remaining_seconds = int((channel.current_program.stop - timestamp).total_seconds())
+        if remaining_seconds > 0:
+            command_parts.extend(["-t", format_seconds_as_hms(remaining_seconds)])
+    command_parts.extend(["-c", "copy", f'"{filename}"'])
+    return " ".join(command_parts)
