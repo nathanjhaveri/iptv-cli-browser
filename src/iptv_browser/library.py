@@ -206,7 +206,14 @@ def format_ffmpeg_command(
     parts.append(title_slug)
     filename = "-".join(parts) + ".ts"
 
-    command_parts = ["ffmpeg", "-i", f'"{channel.stream_url}"']
+    command_parts = [
+        "ffmpeg",
+        "-reconnect", "1",
+        "-reconnect_streamed", "1",
+        "-reconnect_at_eof", "1",
+        "-reconnect_delay_max", "10",
+        "-i", f'"{channel.stream_url}"',
+    ]
     duration_seconds = DEFAULT_RECORD_DURATION_SECONDS
     if target_program:
         if program is not None:
@@ -215,5 +222,12 @@ def format_ffmpeg_command(
             duration_seconds = int((target_program.stop - timestamp).total_seconds())
     if duration_seconds > 0:
         command_parts.extend(["-t", format_seconds_as_hms(duration_seconds)])
-    command_parts.extend(["-c", "copy", f'"{filename}"'])
+    command_parts.extend([
+        "-map", "0",
+        "-dn",
+        "-fflags", "+discardcorrupt",
+        "-c", "copy",
+        "-f", "mpegts",
+        f'"{filename}"',
+    ])
     return " ".join(command_parts)
