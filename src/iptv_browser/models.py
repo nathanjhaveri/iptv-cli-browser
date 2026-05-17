@@ -27,4 +27,4 @@ class Channel:
     stream_url: str
     current_program: Program | None = None
     upcoming_programs: list[Program] = field(default_factory=list)
-
+    epg_programs: list[Program] = field(default_factory=list)

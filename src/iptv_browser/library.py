@@ -129,10 +129,6 @@ def load_epg_snapshot(workdir: Path, *, now: datetime | None = None) -> tuple[di
             elem.clear()
             continue
 
-        if len(programs[channel_id]) >= 4:
-            elem.clear()
-            continue
-
         title = (elem.findtext("title") or "").strip() or "Untitled"
         description = (elem.findtext("desc") or "").strip()
         programs[channel_id].append(Program(title=title, start=start, stop=stop, description=description))
@@ -162,7 +158,7 @@ def attach_epg(channels: list[Channel], display_names: dict[str, list[str]], pro
         if not match_id:
             continue
 
-        matched = programs.get(match_id, [])
+        matched = sorted(programs.get(match_id, []), key=lambda program: program.start)
         current: Program | None = None
         upcoming: list[Program] = []
         for program in matched:
@@ -172,6 +168,7 @@ def attach_epg(channels: list[Channel], display_names: dict[str, list[str]], pro
                 upcoming.append(program)
         channel.current_program = current
         channel.upcoming_programs = upcoming
+        channel.epg_programs = matched
     return channels
 
 

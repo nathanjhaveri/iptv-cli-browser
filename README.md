@@ -29,7 +29,7 @@ The browser can launch streams in external tools, but recordings only happen if 
 ## Browser controls
 
 - Type to filter channels. Arrow keys move through the active list.
-- `Tab` toggles between channels and the selected channel's programs.
+- `Tab` toggles between channels and the selected channel's full current/future EPG schedule.
 - `Ctrl-R` selects the visible recording command so it prints to stdout when the browser exits.
 - `Ctrl-F` captures one full-resolution PNG frame, renders it in the upper-right terminal pane, and shows `ffprobe` stats such as bitrate and resolution.
 - `Ctrl-P` opens the selected stream in VLC.

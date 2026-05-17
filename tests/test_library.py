@@ -76,6 +76,9 @@ class LibraryTests(unittest.TestCase):
   <channel id="news.hd"><display-name>News HD</display-name></channel>
   <programme start="20260425190000 +0000" stop="20260425200000 +0000" channel="news.hd"><title>Bulletin</title></programme>
   <programme start="20260425200000 +0000" stop="20260425210000 +0000" channel="news.hd"><title>Weather</title></programme>
+  <programme start="20260425210000 +0000" stop="20260425220000 +0000" channel="news.hd"><title>Business</title></programme>
+  <programme start="20260425220000 +0000" stop="20260425230000 +0000" channel="news.hd"><title>Late News</title></programme>
+  <programme start="20260425230000 +0000" stop="20260426000000 +0000" channel="news.hd"><title>Overnight</title></programme>
 </tv>
 """
             (root / "epg.xml").write_text(xml, encoding="utf-8")
@@ -84,7 +87,17 @@ class LibraryTests(unittest.TestCase):
             )
             self.assertIn("news.hd", display_names)
             channels = [
-                type("ChannelLike", (), {"name": "News HD", "epg_channel_id": "news.hd", "current_program": None, "upcoming_programs": []})()
+                type(
+                    "ChannelLike",
+                    (),
+                    {
+                        "name": "News HD",
+                        "epg_channel_id": "news.hd",
+                        "current_program": None,
+                        "upcoming_programs": [],
+                        "epg_programs": [],
+                    },
+                )()
             ]
             result = attach_epg(
                 channels,
@@ -94,6 +107,11 @@ class LibraryTests(unittest.TestCase):
             )
             self.assertEqual("Bulletin", result[0].current_program.title)
             self.assertEqual("Weather", result[0].upcoming_programs[0].title)
+            self.assertEqual(["Weather", "Business", "Late News"], [program.title for program in result[0].upcoming_programs])
+            self.assertEqual(
+                ["Bulletin", "Weather", "Business", "Late News", "Overnight"],
+                [program.title for program in result[0].epg_programs],
+            )
 
     def test_inspect_library_reports_stale_epg(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

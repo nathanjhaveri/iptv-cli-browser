@@ -22,11 +22,14 @@ from .stream_tools import (
 
 
 CTRL_C = 3
+CTRL_E = 5
 CTRL_F = 6
 CTRL_O = 15
 CTRL_P = 16
 CTRL_R = 18
 TERMINAL_IMAGE_ID = 2401
+SEARCH_SCOPES = ("Channels", "EPG", "All")
+DEFAULT_SEARCH_SCOPE_INDEX = 2
 
 
 @dataclass
@@ -56,6 +59,10 @@ class ChannelBrowser:
         self.channel_index = 0
         self.program_index = 0
         self.program_mode = False
+        self.search_scope_index = DEFAULT_SEARCH_SCOPE_INDEX
+        self.channel_search_text_by_id: dict[str, str] = {}
+        self.epg_search_entries_by_channel_id: dict[str, list[tuple[str, Program]]] = {}
+        self.epg_match_by_channel_id: dict[str, Program] = {}
         self.result = BrowserResult()
         self.stream_status_by_channel_id: dict[str, list[str]] = {}
         self.stream_image_channel_id: str | None = None
@@ -64,30 +71,57 @@ class ChannelBrowser:
         self.terminal_image_protocol = detect_terminal_image_protocol()
         self.terminal_image_transmitted_generation = -1
         self.terminal_image_visible = False
+        self._build_search_index()
 
     def run(self) -> BrowserResult:
         curses.wrapper(self._main)
         return self.result
 
     def _apply_filter(self) -> None:
+        self.epg_match_by_channel_id = {}
         if not self.query:
             self.filtered = list(self.channels)
         else:
             needle = normalize_name(self.query)
             items: list[Channel] = []
             for channel in self.channels:
-                haystacks = [
-                    channel.name,
-                    channel.category_name or "",
-                    channel.current_program.title if channel.current_program else "",
-                ]
-                if any(needle in normalize_name(part) for part in haystacks):
+                channel_matches = self._search_scope in {"Channels", "All"} and needle in self.channel_search_text_by_id[channel.stream_id]
+                epg_match = self._first_epg_match(channel, needle) if self._search_scope in {"EPG", "All"} else None
+                if epg_match:
+                    self.epg_match_by_channel_id[channel.stream_id] = epg_match
+                if channel_matches or epg_match:
                     items.append(channel)
             self.filtered = items
         if self.channel_index >= len(self.filtered):
             self.channel_index = max(0, len(self.filtered) - 1)
         if self.program_index >= len(self._selected_program_rows()):
             self.program_index = max(0, len(self._selected_program_rows()) - 1)
+
+    @property
+    def _search_scope(self) -> str:
+        return SEARCH_SCOPES[self.search_scope_index]
+
+    def _build_search_index(self) -> None:
+        for channel in self.channels:
+            channel_parts = [
+                channel.name,
+                channel.category_name or "",
+                channel.current_program.title if channel.current_program else "",
+            ]
+            self.channel_search_text_by_id[channel.stream_id] = normalize_name(" ".join(channel_parts))
+            self.epg_search_entries_by_channel_id[channel.stream_id] = [
+                (normalize_name(f"{program.title} {program.description}"), program)
+                for program in channel.epg_programs
+            ]
+
+    def _first_epg_match(self, channel: Channel, needle: str) -> Program | None:
+        for search_text, program in self.epg_search_entries_by_channel_id.get(channel.stream_id, []):
+            if needle in search_text:
+                return program
+        return None
+
+    def _epg_match_for(self, channel: Channel) -> Program | None:
+        return self.epg_match_by_channel_id.get(channel.stream_id)
 
     def _selected_channel(self) -> Channel | None:
         if not self.filtered:
@@ -98,6 +132,8 @@ class ChannelBrowser:
         channel = self._selected_channel()
         if channel is None:
             return []
+        if channel.epg_programs:
+            return [ProgramRow(channel=channel, program=program) for program in channel.epg_programs]
         rows: list[ProgramRow] = []
         if channel.current_program:
             rows.append(ProgramRow(channel=channel, program=channel.current_program))
@@ -132,6 +168,10 @@ class ChannelBrowser:
                         self._apply_filter()
                         continue
                     return
+                if key == CTRL_E:
+                    self.search_scope_index = (self.search_scope_index + 1) % len(SEARCH_SCOPES)
+                    self._apply_filter()
+                    continue
                 if key == CTRL_F:
                     self._show_stream_frame(stdscr)
                     continue
@@ -149,7 +189,7 @@ class ChannelBrowser:
                         self.program_mode = False
                     elif self._selected_program_rows():
                         self.program_mode = True
-                        self.program_index = 0
+                        self.program_index = self._matched_program_index(self._selected_channel())
                     continue
                 if key == curses.KEY_LEFT and self.program_mode:
                     self.program_mode = False
@@ -201,7 +241,7 @@ class ChannelBrowser:
             for row, program_row in enumerate(visible_programs):
                 idx = start + row
                 prefix = "NOW" if idx == 0 and program_row.channel.current_program is program_row.program else "EPG"
-                line = f"{program_row.program.time_range} | {prefix} | {program_row.program.title}"
+                line = self._format_program_row(prefix, program_row.program)
                 attr = curses.A_REVERSE if idx == self.program_index else curses.A_NORMAL
                 stdscr.addnstr(list_top + row, 0, line, list_width, attr)
         else:
@@ -212,22 +252,32 @@ class ChannelBrowser:
                 idx = start + row
                 current = channel.current_program.title if channel.current_program else ""
                 line = channel.name
+                if channel.epg_programs:
+                    line = f"{line} [EPG {len(channel.epg_programs)}]"
                 if current:
                     line = f"{line} | {current}"
+                epg_match = self._epg_match_for(channel)
+                if epg_match:
+                    line = f"{line} | Match: {self._format_program_match(epg_match)}"
                 attr = curses.A_REVERSE if idx == self.channel_index else curses.A_NORMAL
                 stdscr.addnstr(list_top + row, 0, line, list_width, attr)
 
         self._draw_detail(stdscr, detail_top, 0, detail_height, width - 1)
 
         mode = "Programs" if self.program_mode else "Channels"
+        if self.program_mode:
+            total = len(self._selected_program_rows())
+            position = min(total, self.program_index + 1) if total else 0
+            count_label = f"{position}/{total}"
+        else:
+            count_label = f"{len(self.filtered)}/{len(self.channels)}"
         footer = (
-            f"{mode}: "
-            f"{len(self._selected_program_rows()) if self.program_mode else len(self.filtered)}/"
-            f"{len(self.channels) if not self.program_mode else len(self._selected_program_rows())}  "
-            "Ctrl-R: command  Ctrl-F: frame/stats  Ctrl-P: VLC  Tab: programs  Ctrl-C: clear/quit"
+            f"{mode}: {count_label}  "
+            f"Search: {self._search_scope}  "
+            "Ctrl-E: scope  Ctrl-R: command  Ctrl-F: frame/stats  Ctrl-P: VLC  Tab: programs  Ctrl-C: clear/quit"
         )
         stdscr.addnstr(height - 2, 0, footer, width - 1, curses.A_BOLD)
-        prompt = f"Search: {self.query}"
+        prompt = f"Search ({self._search_scope}): {self.query}"
         stdscr.addnstr(height - 1, 0, prompt, width - 1)
         cursor = (height - 1, min(width - 1, len(prompt)))
         stdscr.move(*cursor)
@@ -253,6 +303,11 @@ class ChannelBrowser:
             f"Category: {channel.category_name or 'Uncategorized'}",
             f"Stream ID: {channel.stream_id}",
         ]
+        if channel.epg_programs:
+            lines.append(f"EPG: {len(channel.epg_programs)} current/future programs loaded")
+        epg_match = self._epg_match_for(channel)
+        if epg_match and not program_row:
+            lines.append(f"Search match: {self._format_program_match(epg_match)}")
         detail_program = program_row.program if program_row else channel.current_program
         if detail_program:
             label = "Program" if program_row else "Now"
@@ -332,6 +387,24 @@ class ChannelBrowser:
         if current:
             wrapped.append(current)
         return wrapped or [line]
+
+    def _format_program_row(self, prefix: str, program: Program) -> str:
+        date_label = program.start.strftime("%a %m-%d")
+        return f"{date_label} | {program.time_range} | {prefix} | {program.title}"
+
+    def _format_program_match(self, program: Program) -> str:
+        return f"{program.start.strftime('%a %m-%d')} {program.time_range} {program.title}"
+
+    def _matched_program_index(self, channel: Channel | None) -> int:
+        if channel is None:
+            return 0
+        matched = self._epg_match_for(channel)
+        if matched is None:
+            return 0
+        for index, row in enumerate(self._selected_program_rows()):
+            if row.program is matched:
+                return index
+        return 0
 
     def _select_record_command(self) -> None:
         if self.program_mode:
