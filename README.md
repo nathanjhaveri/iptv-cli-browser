@@ -32,7 +32,9 @@ The browser can launch streams in external tools, but recordings only happen if 
 - `Tab` toggles between channels and the selected channel's programs.
 - `Ctrl-R` selects the visible recording command so it prints to stdout when the browser exits.
 - `Ctrl-F` captures one full-resolution PNG frame, renders it in the upper-right terminal pane, and shows `ffprobe` stats such as bitrate and resolution.
-- `Ctrl-O` opens the selected stream in VLC.
+- `Ctrl-P` opens the selected stream in VLC.
 - `Ctrl-C` clears the search text, or quits if the search is already empty.
 
-`Ctrl-F` requires `ffmpeg` and `ffprobe` on `PATH`. Inline image rendering currently uses the Kitty/Ghostty terminal image protocol. `Ctrl-O` requires VLC.
+Fetched stream stats stay visible for each probed channel while you browse.
+
+`Ctrl-F` requires `ffmpeg` and `ffprobe` on `PATH`. Inline image rendering currently uses the Kitty/Ghostty terminal image protocol. `Ctrl-P` requires VLC.

@@ -24,6 +24,7 @@ from .stream_tools import (
 CTRL_C = 3
 CTRL_F = 6
 CTRL_O = 15
+CTRL_P = 16
 CTRL_R = 18
 TERMINAL_IMAGE_ID = 2401
 
@@ -56,8 +57,7 @@ class ChannelBrowser:
         self.program_index = 0
         self.program_mode = False
         self.result = BrowserResult()
-        self.stream_status_channel_id: str | None = None
-        self.stream_status_lines: list[str] = []
+        self.stream_status_by_channel_id: dict[str, list[str]] = {}
         self.stream_image_channel_id: str | None = None
         self.stream_image: StreamImage | None = None
         self.stream_image_generation = 0
@@ -136,6 +136,9 @@ class ChannelBrowser:
                     self._show_stream_frame(stdscr)
                     continue
                 if key == CTRL_O:
+                    self._open_stream_in_vlc(stdscr)
+                    continue
+                if key == CTRL_P:
                     self._open_stream_in_vlc(stdscr)
                     continue
                 if key == CTRL_R:
@@ -221,7 +224,7 @@ class ChannelBrowser:
             f"{mode}: "
             f"{len(self._selected_program_rows()) if self.program_mode else len(self.filtered)}/"
             f"{len(self.channels) if not self.program_mode else len(self._selected_program_rows())}  "
-            "Ctrl-R: command  Ctrl-F: frame/stats  Ctrl-O: VLC  Tab: programs  Ctrl-C: clear/quit"
+            "Ctrl-R: command  Ctrl-F: frame/stats  Ctrl-P: VLC  Tab: programs  Ctrl-C: clear/quit"
         )
         stdscr.addnstr(height - 2, 0, footer, width - 1, curses.A_BOLD)
         prompt = f"Search: {self.query}"
@@ -390,13 +393,10 @@ class ChannelBrowser:
         self._set_stream_status(channel, ["VLC: launched stream."])
 
     def _set_stream_status(self, channel: Channel, lines: list[str]) -> None:
-        self.stream_status_channel_id = channel.stream_id
-        self.stream_status_lines = lines
+        self.stream_status_by_channel_id[channel.stream_id] = lines
 
     def _stream_status_for(self, channel: Channel) -> list[str]:
-        if self.stream_status_channel_id != channel.stream_id:
-            return []
-        return self.stream_status_lines
+        return self.stream_status_by_channel_id.get(channel.stream_id, [])
 
     def _set_stream_image(self, channel: Channel, image: StreamImage | None) -> None:
         self.stream_image_channel_id = channel.stream_id if image else None
