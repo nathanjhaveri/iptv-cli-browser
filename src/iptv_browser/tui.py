@@ -1,11 +1,31 @@
 from __future__ import annotations
 
 import curses
+import os
 import textwrap
 from dataclasses import dataclass
 
 from .library import format_ffmpeg_command, normalize_name
 from .models import Channel, Program
+from .stream_tools import (
+    StreamImage,
+    StreamToolError,
+    capture_stream_image,
+    detect_terminal_image_protocol,
+    kitty_delete_image_sequence,
+    kitty_place_image_sequence,
+    kitty_transmit_image_sequence,
+    open_with_vlc,
+    probe_stream_stats,
+    terminal_cursor_position_sequence,
+)
+
+
+CTRL_C = 3
+CTRL_F = 6
+CTRL_O = 15
+CTRL_R = 18
+TERMINAL_IMAGE_ID = 2401
 
 
 @dataclass
@@ -19,6 +39,14 @@ class ProgramRow:
     program: Program
 
 
+@dataclass(frozen=True, slots=True)
+class PreviewPane:
+    top: int
+    left: int
+    height: int
+    width: int
+
+
 class ChannelBrowser:
     def __init__(self, channels: list[Channel]) -> None:
         self.channels = channels
@@ -28,6 +56,14 @@ class ChannelBrowser:
         self.program_index = 0
         self.program_mode = False
         self.result = BrowserResult()
+        self.stream_status_channel_id: str | None = None
+        self.stream_status_lines: list[str] = []
+        self.stream_image_channel_id: str | None = None
+        self.stream_image: StreamImage | None = None
+        self.stream_image_generation = 0
+        self.terminal_image_protocol = detect_terminal_image_protocol()
+        self.terminal_image_transmitted_generation = -1
+        self.terminal_image_visible = False
 
     def run(self) -> BrowserResult:
         curses.wrapper(self._main)
@@ -77,68 +113,83 @@ class ChannelBrowser:
     def _main(self, stdscr: curses.window) -> None:
         curses.curs_set(1)
         stdscr.keypad(True)
-        curses.use_default_colors()
+        if curses.has_colors():
+            curses.start_color()
+            try:
+                curses.use_default_colors()
+            except curses.error:
+                pass
 
-        while True:
-            self._draw(stdscr)
-            key = stdscr.getch()
-            if key == 27:
-                return
-            if key == 3:
-                if self.query:
-                    self.query = ""
+        try:
+            while True:
+                self._draw(stdscr)
+                key = stdscr.getch()
+                if key == 27:
+                    return
+                if key == CTRL_C:
+                    if self.query:
+                        self.query = ""
+                        self._apply_filter()
+                        continue
+                    return
+                if key == CTRL_F:
+                    self._show_stream_frame(stdscr)
+                    continue
+                if key == CTRL_O:
+                    self._open_stream_in_vlc(stdscr)
+                    continue
+                if key == CTRL_R:
+                    self._select_record_command()
+                    continue
+                if key == ord("\t"):
+                    if self.program_mode:
+                        self.program_mode = False
+                    elif self._selected_program_rows():
+                        self.program_mode = True
+                        self.program_index = 0
+                    continue
+                if key == curses.KEY_LEFT and self.program_mode:
+                    self.program_mode = False
+                    continue
+                if key == curses.KEY_UP:
+                    if self.program_mode:
+                        self.program_index = max(0, self.program_index - 1)
+                    else:
+                        self.channel_index = max(0, self.channel_index - 1)
+                    continue
+                if key == curses.KEY_DOWN:
+                    if self.program_mode:
+                        self.program_index = min(
+                            max(0, len(self._selected_program_rows()) - 1),
+                            self.program_index + 1,
+                        )
+                    else:
+                        self.channel_index = min(max(0, len(self.filtered) - 1), self.channel_index + 1)
+                    continue
+                if key in (curses.KEY_BACKSPACE, 127, 8):
+                    self.query = self.query[:-1]
                     self._apply_filter()
                     continue
-                return
-            if key == ord("\t"):
-                if self.program_mode:
-                    self.program_mode = False
-                elif self._selected_program_rows():
-                    self.program_mode = True
-                    self.program_index = 0
-                continue
-            if key == curses.KEY_LEFT and self.program_mode:
-                self.program_mode = False
-                continue
-            if key == curses.KEY_UP:
-                if self.program_mode:
-                    self.program_index = max(0, self.program_index - 1)
-                else:
-                    self.channel_index = max(0, self.channel_index - 1)
-                continue
-            if key == curses.KEY_DOWN:
-                if self.program_mode:
-                    self.program_index = min(max(0, len(self._selected_program_rows()) - 1), self.program_index + 1)
-                else:
-                    self.channel_index = min(max(0, len(self.filtered) - 1), self.channel_index + 1)
-                continue
-            if key in (curses.KEY_BACKSPACE, 127, 8):
-                self.query = self.query[:-1]
-                self._apply_filter()
-                continue
-            if key in (10, 13):
-                if self.program_mode:
-                    selected = self._selected_program_row()
-                    if selected:
-                        self.result.selected_command = format_ffmpeg_command(selected.channel, program=selected.program)
-                else:
-                    selected = self._selected_channel()
-                    if selected:
-                        self.result.selected_command = format_ffmpeg_command(selected)
-                continue
-            if 32 <= key <= 126:
-                self.query += chr(key)
-                self._apply_filter()
+                if 32 <= key <= 126:
+                    self.query += chr(key)
+                    self._apply_filter()
+        finally:
+            self._delete_terminal_image()
 
     def _draw(self, stdscr: curses.window) -> None:
         stdscr.erase()
         height, width = stdscr.getmaxyx()
-        detail_height = min(9, max(6, height // 3))
+        detail_height = self._detail_height(height)
         list_top = 0
         detail_top = max(1, height - 2 - detail_height)
         list_bottom = detail_top - 1
         rows = max(1, list_bottom - list_top)
         start = 0
+        preview_pane = self._preview_pane(height, width)
+        list_width = max(1, width - 1)
+        if preview_pane:
+            list_width = max(1, preview_pane.left - 1)
+
         if self.program_mode:
             program_rows = self._selected_program_rows()
             if self.program_index >= rows:
@@ -149,7 +200,7 @@ class ChannelBrowser:
                 prefix = "NOW" if idx == 0 and program_row.channel.current_program is program_row.program else "EPG"
                 line = f"{program_row.program.time_range} | {prefix} | {program_row.program.title}"
                 attr = curses.A_REVERSE if idx == self.program_index else curses.A_NORMAL
-                stdscr.addnstr(list_top + row, 0, line, width - 1, attr)
+                stdscr.addnstr(list_top + row, 0, line, list_width, attr)
         else:
             if self.channel_index >= rows:
                 start = self.channel_index - rows + 1
@@ -161,17 +212,24 @@ class ChannelBrowser:
                 if current:
                     line = f"{line} | {current}"
                 attr = curses.A_REVERSE if idx == self.channel_index else curses.A_NORMAL
-                stdscr.addnstr(list_top + row, 0, line, width - 1, attr)
+                stdscr.addnstr(list_top + row, 0, line, list_width, attr)
 
         self._draw_detail(stdscr, detail_top, 0, detail_height, width - 1)
 
         mode = "Programs" if self.program_mode else "Channels"
-        footer = f"{mode}: {len(self._selected_program_rows()) if self.program_mode else len(self.filtered)}/{len(self.channels) if not self.program_mode else len(self._selected_program_rows())}  Enter: refresh command  Tab: toggle programs  Ctrl-C: clear/quit"
+        footer = (
+            f"{mode}: "
+            f"{len(self._selected_program_rows()) if self.program_mode else len(self.filtered)}/"
+            f"{len(self.channels) if not self.program_mode else len(self._selected_program_rows())}  "
+            "Ctrl-R: command  Ctrl-F: frame/stats  Ctrl-O: VLC  Tab: programs  Ctrl-C: clear/quit"
+        )
         stdscr.addnstr(height - 2, 0, footer, width - 1, curses.A_BOLD)
         prompt = f"Search: {self.query}"
         stdscr.addnstr(height - 1, 0, prompt, width - 1)
-        stdscr.move(height - 1, min(width - 1, len(prompt)))
+        cursor = (height - 1, min(width - 1, len(prompt)))
+        stdscr.move(*cursor)
         stdscr.refresh()
+        self._render_terminal_image(preview_pane, cursor=cursor)
 
     def _draw_detail(
         self,
@@ -204,10 +262,29 @@ class ChannelBrowser:
             lines.append("Next:")
             for program in channel.upcoming_programs:
                 lines.append(f"{program.time_range} {program.title}")
+
+        stream_status = self._stream_status_for(channel)
+        if stream_status:
+            lines.append("")
+            lines.extend(stream_status)
+
         lines.append("")
-        command = self.result.selected_command or format_ffmpeg_command(channel, program=detail_program)
+        command = format_ffmpeg_command(channel, program=detail_program)
+        lines.append("Record command:")
         lines.append(command)
 
+        self._draw_detail_lines(stdscr, lines, top, left, height, width)
+
+    def _draw_detail_lines(
+        self,
+        stdscr: curses.window,
+        lines: list[str],
+        top: int,
+        left: int,
+        height: int,
+        width: int,
+    ) -> None:
+        bottom = top + max(1, height)
         row = top
         for line in lines:
             wrapped_lines = self._wrap_detail_line(line, width)
@@ -252,3 +329,140 @@ class ChannelBrowser:
         if current:
             wrapped.append(current)
         return wrapped or [line]
+
+    def _select_record_command(self) -> None:
+        if self.program_mode:
+            selected = self._selected_program_row()
+            if selected is None:
+                return
+            self.result.selected_command = format_ffmpeg_command(selected.channel, program=selected.program)
+            self._set_stream_status(selected.channel, ["Record command selected; quit to print it."])
+            return
+
+        selected_channel = self._selected_channel()
+        if selected_channel is None:
+            return
+        self.result.selected_command = format_ffmpeg_command(selected_channel)
+        self._set_stream_status(selected_channel, ["Record command selected; quit to print it."])
+
+    def _show_stream_frame(self, stdscr: curses.window) -> None:
+        channel = self._selected_channel()
+        if channel is None:
+            return
+
+        self._set_stream_image(channel, None)
+        self._set_stream_status(channel, ["Stream: probing stats and capturing full-resolution frame..."])
+        self._draw(stdscr)
+
+        lines: list[str] = []
+        try:
+            stats = probe_stream_stats(channel.stream_url)
+        except StreamToolError as exc:
+            lines.append(f"Stats error: {exc}")
+        else:
+            lines.extend(stats.summary_lines())
+
+        if self.terminal_image_protocol != "kitty":
+            lines.insert(0, "Preview error: terminal image protocol is unavailable.")
+        else:
+            try:
+                image = capture_stream_image(channel.stream_url)
+            except StreamToolError as exc:
+                lines.insert(0, f"Preview error: {exc}")
+            else:
+                self._set_stream_image(channel, image)
+                lines.insert(0, f"Preview: {image.width}x{image.height} rendered in upper-right pane.")
+
+        self._set_stream_status(channel, lines or ["No stream details available."])
+
+    def _open_stream_in_vlc(self, stdscr: curses.window) -> None:
+        channel = self._selected_channel()
+        if channel is None:
+            return
+
+        self._set_stream_status(channel, ["VLC: launching stream..."])
+        self._draw(stdscr)
+        try:
+            open_with_vlc(channel.stream_url)
+        except StreamToolError as exc:
+            self._set_stream_status(channel, [f"VLC error: {exc}"])
+            return
+        self._set_stream_status(channel, ["VLC: launched stream."])
+
+    def _set_stream_status(self, channel: Channel, lines: list[str]) -> None:
+        self.stream_status_channel_id = channel.stream_id
+        self.stream_status_lines = lines
+
+    def _stream_status_for(self, channel: Channel) -> list[str]:
+        if self.stream_status_channel_id != channel.stream_id:
+            return []
+        return self.stream_status_lines
+
+    def _set_stream_image(self, channel: Channel, image: StreamImage | None) -> None:
+        self.stream_image_channel_id = channel.stream_id if image else None
+        self.stream_image = image
+        self.stream_image_generation += 1
+        self.terminal_image_transmitted_generation = -1
+
+    def _stream_image_for(self, channel: Channel) -> StreamImage | None:
+        if self.stream_image_channel_id != channel.stream_id:
+            return None
+        return self.stream_image
+
+    def _detail_height(self, terminal_height: int) -> int:
+        return min(10, max(6, terminal_height // 3))
+
+    def _preview_pane(self, terminal_height: int, terminal_width: int) -> PreviewPane | None:
+        channel = self._selected_channel()
+        if channel is None or self._stream_image_for(channel) is None:
+            return None
+        if self.terminal_image_protocol != "kitty" or terminal_width < 72 or terminal_height < 14:
+            return None
+
+        detail_top = max(1, terminal_height - 2 - self._detail_height(terminal_height))
+        preview_height = max(1, detail_top - 1)
+        preview_width = min(max(32, terminal_width // 2), terminal_width - 28)
+        if preview_height < 4 or preview_width < 24:
+            return None
+        return PreviewPane(top=0, left=terminal_width - preview_width - 1, height=preview_height, width=preview_width)
+
+    def _render_terminal_image(self, pane: PreviewPane | None, *, cursor: tuple[int, int]) -> None:
+        channel = self._selected_channel()
+        image = self._stream_image_for(channel) if channel else None
+        if pane is None or image is None or self.terminal_image_protocol != "kitty":
+            self._delete_terminal_image()
+            return
+
+        sequence = bytearray()
+        if self.terminal_image_transmitted_generation != self.stream_image_generation:
+            if self.terminal_image_visible:
+                sequence.extend(kitty_delete_image_sequence(image_id=TERMINAL_IMAGE_ID))
+            sequence.extend(terminal_cursor_position_sequence(pane.top, pane.left))
+            sequence.extend(
+                kitty_transmit_image_sequence(
+                    image,
+                    image_id=TERMINAL_IMAGE_ID,
+                    columns=pane.width,
+                    rows=pane.height,
+                )
+            )
+            self.terminal_image_transmitted_generation = self.stream_image_generation
+        else:
+            sequence.extend(terminal_cursor_position_sequence(pane.top, pane.left))
+            sequence.extend(
+                kitty_place_image_sequence(
+                    image_id=TERMINAL_IMAGE_ID,
+                    columns=pane.width,
+                    rows=pane.height,
+                )
+            )
+        sequence.extend(terminal_cursor_position_sequence(*cursor))
+        os.write(1, bytes(sequence))
+        self.terminal_image_visible = True
+
+    def _delete_terminal_image(self) -> None:
+        if self.terminal_image_protocol != "kitty" or not self.terminal_image_visible:
+            return
+        os.write(1, kitty_delete_image_sequence(image_id=TERMINAL_IMAGE_ID))
+        self.terminal_image_visible = False
+        self.terminal_image_transmitted_generation = -1

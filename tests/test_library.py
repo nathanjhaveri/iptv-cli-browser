@@ -9,6 +9,18 @@ from pathlib import Path
 
 from iptv_browser.models import Program
 from iptv_browser.library import attach_epg, format_ffmpeg_command, inspect_library, load_channels, load_epg_snapshot
+from iptv_browser.stream_tools import (
+    StreamImage,
+    detect_terminal_image_protocol,
+    ffmpeg_image_command,
+    ffprobe_command,
+    kitty_delete_image_sequence,
+    kitty_place_image_sequence,
+    kitty_transmit_image_sequence,
+    parse_png_dimensions,
+    parse_ffprobe_stats,
+    vlc_launch_command,
+)
 from iptv_browser.xtream import load_dotenv
 
 
@@ -176,6 +188,75 @@ class LibraryTests(unittest.TestCase):
         )
         self.assertIn("-t 02:00:00", command)
         self.assertIn('"next-match-2026-04-25T1300-sports-1.ts"', command)
+
+    def test_parse_ffprobe_stats_summarizes_video_audio_and_container(self) -> None:
+        stats = parse_ffprobe_stats(
+            {
+                "streams": [
+                    {
+                        "codec_type": "video",
+                        "codec_name": "h264",
+                        "width": 1920,
+                        "height": 1080,
+                        "avg_frame_rate": "30000/1001",
+                        "bit_rate": "4500000",
+                    },
+                    {
+                        "codec_type": "audio",
+                        "codec_name": "aac",
+                        "bit_rate": "128000",
+                    },
+                ],
+                "format": {"bit_rate": "4800000", "duration": "3600.5"},
+            }
+        )
+
+        self.assertEqual("1920x1080", stats.resolution)
+        self.assertEqual(
+            [
+                "Resolution: 1920x1080",
+                "Video: h264, 29.97 fps, 4.50 Mbps",
+                "Audio: aac, 128 kbps",
+                "Container bitrate: 4.80 Mbps",
+                "Duration: 1:00:00",
+            ],
+            stats.summary_lines(),
+        )
+
+    def test_stream_tool_commands_use_urls_as_arguments(self) -> None:
+        stream_url = "http://example.com/live/u/p/101.ts"
+        self.assertEqual(stream_url, ffprobe_command(stream_url)[-1])
+        image_command = ffmpeg_image_command(stream_url)
+        self.assertIn(stream_url, image_command)
+        self.assertEqual("0:v:0", image_command[image_command.index("-map") + 1])
+        self.assertEqual("image2pipe", image_command[image_command.index("-f") + 1])
+        self.assertEqual("png", image_command[image_command.index("-vcodec") + 1])
+        self.assertEqual("pipe:1", image_command[-1])
+        self.assertEqual(["open", "-a", "VLC", stream_url], vlc_launch_command(stream_url, system="Darwin"))
+        self.assertEqual(["vlc", stream_url], vlc_launch_command(stream_url, system="Linux"))
+
+    def test_png_dimensions_and_terminal_image_sequences(self) -> None:
+        png = (
+            b"\x89PNG\r\n\x1a\n"
+            b"\x00\x00\x00\rIHDR"
+            b"\x00\x00\x00\x02"
+            b"\x00\x00\x00\x03"
+            b"\x08\x02\x00\x00\x00"
+            b"\x00\x00\x00\x00"
+        )
+        image = StreamImage(width=2, height=3, data=png)
+
+        self.assertEqual((2, 3), parse_png_dimensions(png))
+        transmit = kitty_transmit_image_sequence(image, image_id=7, columns=40, rows=10)
+        self.assertTrue(transmit.startswith(b"\x1b_Ga=T,f=100,i=7,c=40,r=10,q=2"))
+        self.assertIn(b";iVBOR", transmit)
+        self.assertEqual(b"\x1b_Ga=p,i=7,c=40,r=10,q=2\x1b\\", kitty_place_image_sequence(image_id=7, columns=40, rows=10))
+        self.assertEqual(b"\x1b_Ga=d,d=i,i=7,q=2\x1b\\", kitty_delete_image_sequence(image_id=7))
+
+    def test_terminal_image_protocol_detection(self) -> None:
+        self.assertEqual("kitty", detect_terminal_image_protocol({"TERM_PROGRAM": "ghostty"}))
+        self.assertEqual("kitty", detect_terminal_image_protocol({"KITTY_WINDOW_ID": "1"}))
+        self.assertIsNone(detect_terminal_image_protocol({"TERM_PROGRAM": "Apple_Terminal"}))
 
 
 if __name__ == "__main__":
