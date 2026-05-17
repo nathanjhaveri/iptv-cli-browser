@@ -107,7 +107,7 @@ def ffmpeg_image_command(stream_url: str) -> list[str]:
 def vlc_launch_command(stream_url: str, *, system: str | None = None) -> list[str]:
     system = system or platform.system()
     if system == "Darwin":
-        return ["open", "-a", "VLC", stream_url]
+        return ["open", "-n", "-a", "VLC", "--args", stream_url]
     return ["vlc", stream_url]
 
 

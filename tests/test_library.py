@@ -232,7 +232,7 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual("image2pipe", image_command[image_command.index("-f") + 1])
         self.assertEqual("png", image_command[image_command.index("-vcodec") + 1])
         self.assertEqual("pipe:1", image_command[-1])
-        self.assertEqual(["open", "-a", "VLC", stream_url], vlc_launch_command(stream_url, system="Darwin"))
+        self.assertEqual(["open", "-n", "-a", "VLC", "--args", stream_url], vlc_launch_command(stream_url, system="Darwin"))
         self.assertEqual(["vlc", stream_url], vlc_launch_command(stream_url, system="Linux"))
 
     def test_png_dimensions_and_terminal_image_sequences(self) -> None:
